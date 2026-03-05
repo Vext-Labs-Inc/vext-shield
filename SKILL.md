@@ -1,7 +1,7 @@
 ---
 name: vext-shield
 description: AI-native security suite for OpenClaw. Scans skills for prompt injection, data exfiltration, cognitive rootkits, semantic worms, and more. Includes static analysis, adversarial red teaming, runtime monitoring, policy firewall, and security dashboard. Built by Vext Labs.
-version: 1.0.0
+version: 1.0.3
 category: security
 metadata:
   openclaw:
