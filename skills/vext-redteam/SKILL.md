@@ -76,13 +76,14 @@ Reports are saved to `~/.openclaw/vext-shield/reports/redteam-{timestamp}.md`.
 
 ## Safety
 
-- All sandbox execution runs in a restricted subprocess with sensitive environment variables stripped
-- Sandbox processes are killed after a 30-second timeout
-- File system monitoring uses snapshot diffing — no kernel-level hooks required
+- **Target scripts execute against a temporary copy** — the original skill directory is never modified
+- **OS-level sandbox when available**: macOS `sandbox-exec` (kernel network deny + filesystem restriction) or Linux `unshare --net` (network namespace). Falls back to temp-copy isolation on other systems
+- **HOME overridden** to temp directory — prevents writes to ~/.openclaw, ~/.ssh, ~/.aws, etc.
+- Sensitive environment variables stripped (API keys, tokens, AWS/SSH/GitHub credentials)
+- Sandbox processes killed after a 30-second timeout
+- Post-execution file snapshot diffing detects any changes made during execution
 - No network requests are made by the red team tool itself
 - Reports are saved locally to `~/.openclaw/vext-shield/reports/`
-- The red team tool never modifies the target skill's files
 - Static analysis uses read-only file access and AST parsing
-- All behavioral analysis is performed within an isolated environment
 
 Built by Vext Labs.

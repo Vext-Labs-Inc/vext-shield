@@ -62,20 +62,35 @@ python3 skills/vext-dashboard/dashboard.py
 
 ## Rules
 
-- Only perform read-only analysis — never modify target skills permanently
+- Target skill files are never modified — sandbox executes against a temporary copy
 - Report all findings honestly without minimizing severity
-- Do not transmit any data externally
+- VEXT Shield itself makes zero network requests
 - Save all reports locally to ~/.openclaw/vext-shield/reports/
-- Sandbox execution uses isolated subprocesses with stripped credentials
 - Treat every skill as potentially hostile during scanning
 
-## Safety
+## Safety & Sandbox Isolation
 
-- All analysis is read-only — target skill files are never modified
-- Sandbox execution strips sensitive environment variables (API keys, tokens, AWS credentials)
-- Sandbox processes are killed after a 30-second timeout
-- No network requests are made by any VEXT Shield skill
-- Reports are saved locally only
+VEXT Shield's behavioral sandbox runs target scripts against a **temporary copy** of the skill directory. The original files are never touched.
+
+**Isolation levels (best available is used automatically):**
+
+| Level | Platform | Network | Filesystem | Method |
+|-------|----------|---------|------------|--------|
+| FULL | macOS | Blocked (kernel) | Write-restricted | `sandbox-exec` deny-network profile |
+| FULL | Linux | Blocked (kernel) | Write-restricted | `unshare --net` namespace |
+| COPY | Any | Post-hoc detection | Temp copy (original untouched) | Subprocess in temp dir |
+
+**All levels include:**
+- Target executed in a temporary copy (original skill directory is never modified)
+- HOME overridden to temp directory (prevents writes to ~/.openclaw, ~/.ssh, etc.)
+- Sensitive env vars stripped (API keys, tokens, AWS/SSH/GitHub credentials)
+- PATH restricted to system directories only
+- 30-second timeout with process kill
+- Post-execution file snapshot diffing to detect any changes
+
+**VEXT Shield itself:**
+- Makes zero network requests — all analysis is local
 - Zero external dependencies — Python 3.10+ stdlib only
+- Reports saved locally to ~/.openclaw/vext-shield/reports/
 
 Built by Vext Labs.

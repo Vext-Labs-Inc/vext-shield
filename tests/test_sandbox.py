@@ -78,8 +78,8 @@ class TestSandboxExecution:
         assert report.duration_ms < 10000  # Should be well under 10s
         assert report.exit_code != 0  # Killed by timeout
 
-    def test_detects_file_creation(self, sandbox: SandboxRunner, tmp_path: Path):
-        """Should detect files created during execution."""
+    def test_blocks_or_detects_file_creation(self, sandbox: SandboxRunner, tmp_path: Path):
+        """Sandbox should either block file writes (FULL) or detect them (COPY)."""
         script = tmp_path / "creator.py"
         script.write_text(
             'from pathlib import Path\n'
@@ -87,12 +87,17 @@ class TestSandboxExecution:
         )
 
         report = sandbox.run_skill_script(script, tmp_path)
-        # Check modifications detected
-        created = [m for m in report.modifications if m.get("type") == "created"]
-        assert len(created) > 0 or report.exit_code == 0  # At minimum ran successfully
+        if report.isolation_level == "FULL":
+            # OS-level sandbox blocked the write — script fails with PermissionError
+            assert report.exit_code != 0
+            assert "PermissionError" in report.stderr or "Operation not permitted" in report.stderr
+        else:
+            # COPY level: writes go to temp copy, detected via snapshot diff
+            created = [m for m in report.modifications if m.get("type") == "created"]
+            assert len(created) > 0 or report.exit_code == 0
 
-    def test_detects_file_modification(self, sandbox: SandboxRunner, tmp_path: Path):
-        """Should detect files modified during execution."""
+    def test_blocks_or_detects_file_modification(self, sandbox: SandboxRunner, tmp_path: Path):
+        """Sandbox should either block file writes (FULL) or detect them (COPY)."""
         target = tmp_path / "existing.txt"
         target.write_text("original content")
 
@@ -103,8 +108,14 @@ class TestSandboxExecution:
         )
 
         report = sandbox.run_skill_script(script, tmp_path)
-        modified = [m for m in report.modifications if m.get("type") == "modified"]
-        assert len(modified) > 0 or report.exit_code == 0
+        if report.isolation_level == "FULL":
+            # OS-level sandbox blocked the write
+            assert report.exit_code != 0
+            assert "PermissionError" in report.stderr or "Operation not permitted" in report.stderr
+        else:
+            # COPY level: writes go to temp copy, detected via snapshot diff
+            modified = [m for m in report.modifications if m.get("type") == "modified"]
+            assert len(modified) > 0 or report.exit_code == 0
 
     def test_script_with_error(self, sandbox: SandboxRunner, tmp_path: Path):
         """Scripts with errors should still return a report."""
