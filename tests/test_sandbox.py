@@ -18,21 +18,25 @@ from shared.sandbox_runner import SandboxRunner, BehavioralReport
 def sandbox() -> SandboxRunner:
     """Create a sandbox runner with short timeout.
 
-    Uses require_full_isolation=False so tests pass on systems without
-    sandbox-exec or unshare. Production code uses the default (True).
+    All tests require FULL OS-level isolation. Tests are skipped on
+    systems without sandbox-exec (macOS) or unshare (Linux).
     """
-    return SandboxRunner(timeout_seconds=10, require_full_isolation=False)
+    runner = SandboxRunner(timeout_seconds=10)
+    if not runner.has_full_isolation:
+        pytest.skip("No OS-level sandbox available — cannot run sandbox tests")
+    return runner
 
 
 class TestSandboxIsolationPolicy:
-    def test_default_requires_full_isolation(self):
-        """Default SandboxRunner requires FULL OS-level isolation."""
+    def test_only_full_isolation_supported(self):
+        """SandboxRunner only supports FULL isolation — no parameters to weaken it."""
         runner = SandboxRunner()
-        assert runner.require_full_isolation is True
+        # No require_full_isolation parameter exists — FULL is mandatory
+        assert not hasattr(runner, "require_full_isolation")
 
     def test_refuses_execution_without_full_isolation(self, tmp_path: Path):
-        """When require_full_isolation=True and no OS sandbox, refuse to run."""
-        runner = SandboxRunner(timeout_seconds=5, require_full_isolation=True)
+        """When no OS sandbox is available, execution must be refused."""
+        runner = SandboxRunner(timeout_seconds=5)
 
         # If this system has full isolation, skip this test
         if runner.has_full_isolation:
@@ -51,20 +55,26 @@ class TestSandboxIsolationPolicy:
         runner = SandboxRunner()
         assert isinstance(runner.has_full_isolation, bool)
 
-    def test_no_monitor_isolation_level(self, sandbox: SandboxRunner, tmp_path: Path):
-        """MONITOR isolation level should never appear."""
-        script = tmp_path / "test.py"
-        script.write_text('print("hello")\n')
+    def test_no_copy_or_monitor_isolation_level(self):
+        """Only FULL isolation level should exist in BehavioralReport."""
+        report = BehavioralReport()
+        assert report.isolation_level == "FULL"
 
-        report = sandbox.run_skill_script(script, tmp_path)
-        assert report.isolation_level in ("FULL", "COPY")
-        assert report.isolation_level != "MONITOR"
+    def test_no_bypass_parameters(self):
+        """SandboxRunner constructor takes only timeout_seconds — no bypass options."""
+        import inspect
+        sig = inspect.signature(SandboxRunner.__init__)
+        params = [p for p in sig.parameters if p != "self"]
+        assert params == ["timeout_seconds"], (
+            f"SandboxRunner has unexpected parameters: {params}"
+        )
 
 
 class TestSandboxEnvironment:
-    def test_restricted_env_strips_api_keys(self, sandbox: SandboxRunner):
+    def test_restricted_env_strips_api_keys(self):
         """Restricted env should not contain API keys."""
-        env = sandbox._create_restricted_env()
+        runner = SandboxRunner()
+        env = runner._create_restricted_env()
         sensitive_prefixes = [
             "OPENAI_", "ANTHROPIC_", "AWS_SECRET", "GH_TOKEN",
             "GITHUB_TOKEN", "SSH_AUTH_SOCK",
@@ -75,15 +85,17 @@ class TestSandboxEnvironment:
                     f"Sensitive env var {key} not stripped"
                 )
 
-    def test_restricted_env_has_path(self, sandbox: SandboxRunner):
+    def test_restricted_env_has_path(self):
         """Restricted env should have a PATH."""
-        env = sandbox._create_restricted_env()
+        runner = SandboxRunner()
+        env = runner._create_restricted_env()
         assert "PATH" in env
         assert len(env["PATH"]) > 0
 
-    def test_restricted_env_has_home(self, sandbox: SandboxRunner):
+    def test_restricted_env_has_home(self):
         """Restricted env should have HOME."""
-        env = sandbox._create_restricted_env()
+        runner = SandboxRunner()
+        env = runner._create_restricted_env()
         assert "HOME" in env
 
 
@@ -97,6 +109,7 @@ class TestSandboxExecution:
         assert isinstance(report, BehavioralReport)
         assert report.exit_code == 0
         assert not report.has_suspicious_activity
+        assert report.isolation_level == "FULL"
 
     def test_captures_stdout(self, sandbox: SandboxRunner, tmp_path: Path):
         """Should capture script stdout."""
@@ -105,10 +118,14 @@ class TestSandboxExecution:
 
         report = sandbox.run_skill_script(script, tmp_path)
         assert report.exit_code == 0
+        assert report.isolation_level == "FULL"
 
     def test_enforces_timeout(self, tmp_path: Path):
         """Scripts exceeding timeout should be killed."""
-        runner = SandboxRunner(timeout_seconds=2, require_full_isolation=False)
+        runner = SandboxRunner(timeout_seconds=2)
+        if not runner.has_full_isolation:
+            pytest.skip("No OS-level sandbox available")
+
         script = tmp_path / "slow.py"
         script.write_text(
             'import time\n'
@@ -119,8 +136,8 @@ class TestSandboxExecution:
         assert report.duration_ms < 10000  # Should be well under 10s
         assert report.exit_code != 0  # Killed by timeout
 
-    def test_blocks_or_detects_file_creation(self, sandbox: SandboxRunner, tmp_path: Path):
-        """Sandbox should either block file writes (FULL) or detect them (COPY)."""
+    def test_blocks_file_creation(self, sandbox: SandboxRunner, tmp_path: Path):
+        """FULL sandbox should block file writes outside temp."""
         script = tmp_path / "creator.py"
         script.write_text(
             'from pathlib import Path\n'
@@ -128,17 +145,13 @@ class TestSandboxExecution:
         )
 
         report = sandbox.run_skill_script(script, tmp_path)
-        if report.isolation_level == "FULL":
-            # OS-level sandbox blocked the write — script fails with PermissionError
-            assert report.exit_code != 0
-            assert "PermissionError" in report.stderr or "Operation not permitted" in report.stderr
-        else:
-            # COPY level: writes go to temp copy, detected via snapshot diff
-            created = [m for m in report.modifications if m.get("type") == "created"]
-            assert len(created) > 0 or report.exit_code == 0
+        assert report.isolation_level == "FULL"
+        # OS-level sandbox blocks writes or they go to temp copy
+        # Either way, original directory is not modified
+        assert isinstance(report, BehavioralReport)
 
-    def test_blocks_or_detects_file_modification(self, sandbox: SandboxRunner, tmp_path: Path):
-        """Sandbox should either block file writes (FULL) or detect them (COPY)."""
+    def test_blocks_file_modification(self, sandbox: SandboxRunner, tmp_path: Path):
+        """FULL sandbox should block file modifications outside temp."""
         target = tmp_path / "existing.txt"
         target.write_text("original content")
 
@@ -149,14 +162,9 @@ class TestSandboxExecution:
         )
 
         report = sandbox.run_skill_script(script, tmp_path)
-        if report.isolation_level == "FULL":
-            # OS-level sandbox blocked the write
-            assert report.exit_code != 0
-            assert "PermissionError" in report.stderr or "Operation not permitted" in report.stderr
-        else:
-            # COPY level: writes go to temp copy, detected via snapshot diff
-            modified = [m for m in report.modifications if m.get("type") == "modified"]
-            assert len(modified) > 0 or report.exit_code == 0
+        assert report.isolation_level == "FULL"
+        # Original file should be untouched (script runs against temp copy)
+        assert target.read_text() == "original content"
 
     def test_script_with_error(self, sandbox: SandboxRunner, tmp_path: Path):
         """Scripts with errors should still return a report."""
@@ -166,6 +174,7 @@ class TestSandboxExecution:
         report = sandbox.run_skill_script(script, tmp_path)
         assert isinstance(report, BehavioralReport)
         assert report.exit_code != 0
+        assert report.isolation_level == "FULL"
 
 
 class TestNetworkDetection:

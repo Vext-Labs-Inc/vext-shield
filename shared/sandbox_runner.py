@@ -2,27 +2,22 @@
 
 Runs skill scripts in an isolated subprocess with:
 - Temporary copy of skill directory (original never touched)
-- macOS sandbox-exec network/filesystem deny policy (when available)
-- Linux unshare network namespace isolation (when available)
+- macOS sandbox-exec network/filesystem deny policy
+- Linux unshare network namespace isolation
 - Restricted environment variables (API keys, tokens, credentials stripped)
 - Timeout enforcement
 - Post-execution behavioral analysis via file snapshot diffing
 
-Isolation levels:
-  FULL    — OS-level sandbox (sandbox-exec on macOS, unshare on Linux)
-            Network blocked at kernel level, filesystem writes restricted.
-  COPY    — Temp directory copy + env restriction (no OS sandbox available)
-            ONLY used when require_full_isolation=False.
-
-There is NO weaker fallback. If FULL isolation is unavailable and
-require_full_isolation=True (the default), execution is refused.
+Only ONE isolation level exists: FULL (OS-level kernel sandbox).
+If OS-level isolation is unavailable, execution is REFUSED.
+There is no fallback, no bypass flag, and no weaker mode.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import tempfile
@@ -73,7 +68,7 @@ class BehavioralReport:
     exit_code: int = -1
     timed_out: bool = False
     error: str | None = None
-    isolation_level: str = "COPY"  # FULL or COPY (no MONITOR)
+    isolation_level: str = "FULL"  # Only FULL exists — no other modes
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -152,34 +147,23 @@ _MACOS_SANDBOX_PROFILE = """\
 class SandboxRunner:
     """Runs skill scripts in an isolated subprocess environment.
 
-    Isolation levels (only two — no weak fallbacks):
+    Only FULL OS-level isolation is supported:
+    - macOS: sandbox-exec kernel policy (network denied, filesystem restricted)
+    - Linux: unshare network namespace (network denied at kernel level)
 
-    1. FULL: OS-level sandbox (macOS sandbox-exec or Linux unshare)
-       - Network access denied at kernel level
-       - Filesystem writes restricted to temp directory only
-    2. COPY: Temp directory copy + env restriction
-       - Script runs against a copy, original is never touched
-       - No OS-level network blocking (post-hoc detection only)
-       - ONLY used when require_full_isolation=False
+    If neither is available, execution is REFUSED. There is no fallback mode,
+    no bypass parameter, and no weaker isolation level.
 
-    By default, require_full_isolation=True: if OS-level sandboxing is
-    unavailable, execution is REFUSED and an error is returned. This
-    prevents untrusted code from running without proper isolation.
-
-    All levels include:
+    All executions include:
+    - Script runs against a temporary copy (original never touched)
     - Sensitive env vars stripped
-    - Timeout enforcement
+    - HOME overridden to temp directory
+    - Timeout enforcement with process kill
     - Post-execution file snapshot diffing
-    - Network activity detection in output
     """
 
-    def __init__(
-        self,
-        timeout_seconds: int = 30,
-        require_full_isolation: bool = True,
-    ) -> None:
+    def __init__(self, timeout_seconds: int = 30) -> None:
         self.timeout_seconds = timeout_seconds
-        self.require_full_isolation = require_full_isolation
         self._system = platform.system()
         self._has_sandbox_exec = (
             self._system == "Darwin"
@@ -207,8 +191,7 @@ class SandboxRunner:
         The script is ALWAYS executed against a temporary copy of the skill
         directory. The original skill directory is never modified.
 
-        If require_full_isolation=True (default) and FULL OS-level sandbox
-        is not available, execution is refused and an error report is returned.
+        If FULL OS-level sandbox is not available, execution is refused.
 
         Args:
             script_path: Path to the script to execute.
@@ -225,8 +208,8 @@ class SandboxRunner:
             report.error = f"No interpreter found for {script_path.suffix}"
             return report
 
-        # Check isolation requirement BEFORE executing anything
-        if self.require_full_isolation and not self.has_full_isolation:
+        # MANDATORY: Refuse execution without OS-level isolation
+        if not self.has_full_isolation:
             report.error = (
                 "FULL OS-level sandbox isolation is required but not available. "
                 "macOS requires sandbox-exec, Linux requires unshare. "
@@ -262,11 +245,11 @@ class SandboxRunner:
             env["HOME"] = tmp_base
             env["TMPDIR"] = tmp_base
 
-            # Build command with best available isolation
-            cmd, isolation_level = self._build_sandboxed_command(
+            # Build sandboxed command (FULL isolation only — no fallback)
+            cmd = self._build_sandboxed_command(
                 interpreter, tmp_script, args, tmp_base
             )
-            report.isolation_level = isolation_level
+            report.isolation_level = "FULL"
 
             try:
                 proc = subprocess.Popen(
@@ -329,17 +312,17 @@ class SandboxRunner:
         script_path: Path,
         args: list[str] | None,
         tmp_base: str,
-    ) -> tuple[list[str], str]:
-        """Build the execution command with best available OS isolation.
+    ) -> list[str]:
+        """Build the execution command with OS-level isolation.
 
-        Returns (command, isolation_level). Only returns FULL or COPY.
-        COPY is only reachable when require_full_isolation=False.
+        Returns the sandboxed command. Only FULL isolation is supported.
+        This method is only called after has_full_isolation is verified.
         """
         base_cmd = [interpreter, str(script_path)]
         if args:
             base_cmd.extend(args)
 
-        # Try macOS sandbox-exec (kernel-level network deny + fs restriction)
+        # macOS sandbox-exec (kernel-level network deny + fs restriction)
         if self._has_sandbox_exec:
             home = os.path.expanduser("~")
             profile = _MACOS_SANDBOX_PROFILE.format(
@@ -348,21 +331,14 @@ class SandboxRunner:
             )
             profile_path = Path(tmp_base) / ".sandbox-profile"
             profile_path.write_text(profile)
-            return (
-                ["sandbox-exec", "-f", str(profile_path)] + base_cmd,
-                "FULL",
-            )
+            return ["sandbox-exec", "-f", str(profile_path)] + base_cmd
 
-        # Try Linux unshare (network namespace isolation)
+        # Linux unshare (network namespace isolation)
         if self._has_unshare:
-            return (
-                ["unshare", "--net", "--map-root-user"] + base_cmd,
-                "FULL",
-            )
+            return ["unshare", "--net", "--map-root-user"] + base_cmd
 
-        # COPY fallback: temp copy provides write isolation, but no network blocking.
-        # Only reachable when require_full_isolation=False.
-        return (base_cmd, "COPY")
+        # Unreachable — has_full_isolation is checked before calling this method
+        raise RuntimeError("No OS-level sandbox available")
 
     def _create_restricted_env(self) -> dict[str, str]:
         """Create a restricted environment for the sandboxed process.
@@ -492,8 +468,6 @@ class SandboxRunner:
     @staticmethod
     def _detect_network_in_output(output: str) -> list[NetworkCall]:
         """Detect network activity indicators in process output."""
-        import re
-
         calls: list[NetworkCall] = []
 
         # Detect URLs in output

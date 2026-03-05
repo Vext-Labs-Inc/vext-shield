@@ -24,9 +24,10 @@
     "network_requests": "none — all analysis is local",
     "file_modifications": "none — all analysis is read-only, target scripts run against temp copies",
     "external_dependencies": "none — Python 3.10+ stdlib only",
-    "sandbox_execution": "OS-level kernel isolation required (macOS sandbox-exec or Linux unshare --net). Execution refused if unavailable. No --skip-sandbox or bypass flags exist.",
-    "sandbox_network": "blocked at kernel level — sandbox-exec deny-network on macOS, unshare --net on Linux",
+    "sandbox_execution": "OS-level kernel isolation is the ONLY mode. SandboxRunner accepts only timeout_seconds — no parameter to weaken or disable isolation. Execution refused if sandbox-exec (macOS) or unshare (Linux) unavailable.",
+    "sandbox_network": "blocked at kernel level — sandbox-exec deny-network on macOS, unshare --net on Linux. No fallback mode without kernel network blocking.",
     "sandbox_filesystem": "writes restricted to temp directory only — HOME overridden, sensitive env vars stripped",
-    "no_bypass_flags": "true — there is no --skip-sandbox, --no-sandbox, or any flag to disable isolation"
+    "no_bypass_flags": "true — no --skip-sandbox flag, no --no-sandbox flag, no require_full_isolation parameter, no COPY mode, no fallback path. SandboxRunner.__init__ signature: (self, timeout_seconds: int = 30) -> None",
+    "no_fallback_modes": "true — only FULL isolation exists. No COPY mode, no MONITOR mode, no weaker alternative. _build_sandboxed_command raises RuntimeError if no OS sandbox (unreachable in practice because run_skill_script checks first)."
   }
 }

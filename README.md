@@ -214,7 +214,9 @@ Behavioral testing **requires OS-level sandbox isolation**. If kernel-level sand
 - Restricted PATH to system directories only
 - Timeout enforcement (30 seconds) with process kill
 - Post-execution file snapshot diffing (before/after)
-- No `--skip-sandbox` or bypass flags exist
+- No `--skip-sandbox` or bypass flags exist — `SandboxRunner.__init__` accepts only `timeout_seconds`
+- No COPY mode, no MONITOR mode — only FULL OS-level isolation
+- No `require_full_isolation` parameter — isolation is unconditional
 
 ---
 

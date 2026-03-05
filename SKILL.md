@@ -1,7 +1,7 @@
 ---
 name: vext-shield
 description: AI-native security suite for OpenClaw. Scans skills for prompt injection, data exfiltration, cognitive rootkits, semantic worms, and more. Includes static analysis, adversarial red teaming, runtime monitoring, policy firewall, and security dashboard. Built by Vext Labs.
-version: 1.1.0
+version: 1.2.0
 category: security
 metadata:
   openclaw:
@@ -88,7 +88,7 @@ VEXT Shield **requires OS-level sandbox isolation** to execute untrusted code. I
 - 30-second timeout with process kill
 - Post-execution file snapshot diffing to detect any changes
 
-**No bypass options exist.** There is no `--skip-sandbox` flag, no `--no-sandbox` flag, and no way to disable isolation. Sandbox behavioral tests always run with OS-level enforcement.
+**No bypass options exist.** There is no `--skip-sandbox` flag, no `--no-sandbox` flag, no `require_full_isolation` parameter, and no weaker fallback mode in the codebase. The `SandboxRunner` class accepts only `timeout_seconds` — isolation is unconditional. If OS-level sandboxing is unavailable, execution raises an error. Sandbox behavioral tests always run with OS-level enforcement.
 
 **VEXT Shield itself:**
 - Makes zero network requests — all analysis is local
