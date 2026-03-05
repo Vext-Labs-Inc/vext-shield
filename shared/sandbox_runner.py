@@ -10,8 +10,12 @@ Runs skill scripts in an isolated subprocess with:
 
 Isolation levels:
   FULL    — OS-level sandbox (sandbox-exec on macOS, unshare on Linux)
+            Network blocked at kernel level, filesystem writes restricted.
   COPY    — Temp directory copy + env restriction (no OS sandbox available)
-  MONITOR — In-place execution with env restriction only (fallback)
+            ONLY used when require_full_isolation=False.
+
+There is NO weaker fallback. If FULL isolation is unavailable and
+require_full_isolation=True (the default), execution is refused.
 """
 
 from __future__ import annotations
@@ -69,7 +73,7 @@ class BehavioralReport:
     exit_code: int = -1
     timed_out: bool = False
     error: str | None = None
-    isolation_level: str = "MONITOR"  # FULL, COPY, or MONITOR
+    isolation_level: str = "COPY"  # FULL or COPY (no MONITOR)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -148,14 +152,19 @@ _MACOS_SANDBOX_PROFILE = """\
 class SandboxRunner:
     """Runs skill scripts in an isolated subprocess environment.
 
-    Isolation strategy (best available):
+    Isolation levels (only two — no weak fallbacks):
+
     1. FULL: OS-level sandbox (macOS sandbox-exec or Linux unshare)
        - Network access denied at kernel level
        - Filesystem writes restricted to temp directory only
     2. COPY: Temp directory copy + env restriction
        - Script runs against a copy, original is never touched
        - No OS-level network blocking (post-hoc detection only)
-    3. MONITOR: In-place with env restriction only (last resort)
+       - ONLY used when require_full_isolation=False
+
+    By default, require_full_isolation=True: if OS-level sandboxing is
+    unavailable, execution is REFUSED and an error is returned. This
+    prevents untrusted code from running without proper isolation.
 
     All levels include:
     - Sensitive env vars stripped
@@ -164,8 +173,13 @@ class SandboxRunner:
     - Network activity detection in output
     """
 
-    def __init__(self, timeout_seconds: int = 30) -> None:
+    def __init__(
+        self,
+        timeout_seconds: int = 30,
+        require_full_isolation: bool = True,
+    ) -> None:
         self.timeout_seconds = timeout_seconds
+        self.require_full_isolation = require_full_isolation
         self._system = platform.system()
         self._has_sandbox_exec = (
             self._system == "Darwin"
@@ -175,6 +189,11 @@ class SandboxRunner:
             self._system == "Linux"
             and shutil.which("unshare") is not None
         )
+
+    @property
+    def has_full_isolation(self) -> bool:
+        """Check if FULL OS-level isolation is available on this system."""
+        return self._has_sandbox_exec or self._has_unshare
 
     def run_skill_script(
         self,
@@ -187,6 +206,9 @@ class SandboxRunner:
 
         The script is ALWAYS executed against a temporary copy of the skill
         directory. The original skill directory is never modified.
+
+        If require_full_isolation=True (default) and FULL OS-level sandbox
+        is not available, execution is refused and an error report is returned.
 
         Args:
             script_path: Path to the script to execute.
@@ -201,6 +223,15 @@ class SandboxRunner:
         interpreter = self._find_interpreter(script_path)
         if interpreter is None:
             report.error = f"No interpreter found for {script_path.suffix}"
+            return report
+
+        # Check isolation requirement BEFORE executing anything
+        if self.require_full_isolation and not self.has_full_isolation:
+            report.error = (
+                "FULL OS-level sandbox isolation is required but not available. "
+                "macOS requires sandbox-exec, Linux requires unshare. "
+                "Refusing to execute untrusted code without kernel-level isolation."
+            )
             return report
 
         # Create a temporary copy of the skill directory
@@ -301,7 +332,8 @@ class SandboxRunner:
     ) -> tuple[list[str], str]:
         """Build the execution command with best available OS isolation.
 
-        Returns (command, isolation_level).
+        Returns (command, isolation_level). Only returns FULL or COPY.
+        COPY is only reachable when require_full_isolation=False.
         """
         base_cmd = [interpreter, str(script_path)]
         if args:
@@ -328,7 +360,8 @@ class SandboxRunner:
                 "FULL",
             )
 
-        # Fallback: temp copy provides write isolation, but no network blocking
+        # COPY fallback: temp copy provides write isolation, but no network blocking.
+        # Only reachable when require_full_isolation=False.
         return (base_cmd, "COPY")
 
     def _create_restricted_env(self) -> dict[str, str]:

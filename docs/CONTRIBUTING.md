@@ -115,7 +115,7 @@ python -m pytest tests/test_scanner.py -v
 
 # Test against fixtures
 python skills/vext-scan/scan.py --skill-dir tests/fixtures/exfil_skill
-python skills/vext-redteam/redteam.py --skill-dir tests/fixtures/semantic_worm_skill --skip-sandbox
+python skills/vext-redteam/redteam.py --skill-dir tests/fixtures/semantic_worm_skill
 ```
 
 ## Reporting Security Issues

@@ -1,7 +1,7 @@
 ---
 name: vext-shield
 description: AI-native security suite for OpenClaw. Scans skills for prompt injection, data exfiltration, cognitive rootkits, semantic worms, and more. Includes static analysis, adversarial red teaming, runtime monitoring, policy firewall, and security dashboard. Built by Vext Labs.
-version: 1.0.3
+version: 1.1.0
 category: security
 metadata:
   openclaw:
@@ -70,23 +70,25 @@ python3 skills/vext-dashboard/dashboard.py
 
 ## Safety & Sandbox Isolation
 
-VEXT Shield's behavioral sandbox runs target scripts against a **temporary copy** of the skill directory. The original files are never touched.
+VEXT Shield **requires OS-level sandbox isolation** to execute untrusted code. If kernel-level sandboxing is not available, execution is **refused** — there is no unsafe fallback.
 
-**Isolation levels (best available is used automatically):**
+**Sandbox enforcement:**
 
-| Level | Platform | Network | Filesystem | Method |
-|-------|----------|---------|------------|--------|
-| FULL | macOS | Blocked (kernel) | Write-restricted | `sandbox-exec` deny-network profile |
-| FULL | Linux | Blocked (kernel) | Write-restricted | `unshare --net` namespace |
-| COPY | Any | Post-hoc detection | Temp copy (original untouched) | Subprocess in temp dir |
+| Platform | Network | Filesystem | Method |
+|----------|---------|------------|--------|
+| macOS | Blocked at kernel | Write-restricted to temp only | `sandbox-exec` deny-network profile |
+| Linux | Blocked at kernel | Write-restricted to temp only | `unshare --net` network namespace |
+| Other | **Execution refused** | **Execution refused** | No fallback — will not run untrusted code |
 
-**All levels include:**
+**All executions include:**
 - Target executed in a temporary copy (original skill directory is never modified)
 - HOME overridden to temp directory (prevents writes to ~/.openclaw, ~/.ssh, etc.)
 - Sensitive env vars stripped (API keys, tokens, AWS/SSH/GitHub credentials)
 - PATH restricted to system directories only
 - 30-second timeout with process kill
 - Post-execution file snapshot diffing to detect any changes
+
+**No bypass options exist.** There is no `--skip-sandbox` flag, no `--no-sandbox` flag, and no way to disable isolation. Sandbox behavioral tests always run with OS-level enforcement.
 
 **VEXT Shield itself:**
 - Makes zero network requests — all analysis is local

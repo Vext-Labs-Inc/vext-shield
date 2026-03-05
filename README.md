@@ -203,12 +203,18 @@ The scanner uses 3 layers of analysis:
 
 ### Sandbox Architecture
 
-Behavioral testing uses isolated subprocess execution:
+Behavioral testing **requires OS-level sandbox isolation**. If kernel-level sandboxing is unavailable, execution is refused — there is no unsafe fallback.
+
+- **macOS**: `sandbox-exec` kernel policy — network denied, filesystem writes restricted to temp only
+- **Linux**: `unshare --net` network namespace — network denied at kernel level
+- **Other**: Execution refused. Will not run untrusted code without OS-level isolation
+- Target always executed in a temporary copy (original never modified)
+- HOME overridden to temp directory
 - Sensitive environment variables stripped (API keys, tokens, AWS credentials)
-- Restricted PATH
-- Timeout enforcement (30 seconds)
-- File system snapshot diffing (before/after)
-- Network call detection via output parsing
+- Restricted PATH to system directories only
+- Timeout enforcement (30 seconds) with process kill
+- Post-execution file snapshot diffing (before/after)
+- No `--skip-sandbox` or bypass flags exist
 
 ---
 
@@ -271,7 +277,7 @@ Run `python -m pytest tests/test_signatures.py` to validate all patterns compile
 ```bash
 python skills/vext-scan/scan.py --skill-dir tests/fixtures/benign_skill
 python skills/vext-scan/scan.py --skill-dir tests/fixtures/exfil_skill
-python skills/vext-redteam/redteam.py --skill-dir tests/fixtures/semantic_worm_skill --skip-sandbox
+python skills/vext-redteam/redteam.py --skill-dir tests/fixtures/semantic_worm_skill
 ```
 
 ---

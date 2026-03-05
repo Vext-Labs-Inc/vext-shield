@@ -22,8 +22,11 @@
   },
   "safety_guarantees": {
     "network_requests": "none — all analysis is local",
-    "file_modifications": "none — all analysis is read-only",
+    "file_modifications": "none — all analysis is read-only, target scripts run against temp copies",
     "external_dependencies": "none — Python 3.10+ stdlib only",
-    "sandbox_execution": "sensitive env vars stripped, 30s timeout enforced"
+    "sandbox_execution": "OS-level kernel isolation required (macOS sandbox-exec or Linux unshare --net). Execution refused if unavailable. No --skip-sandbox or bypass flags exist.",
+    "sandbox_network": "blocked at kernel level — sandbox-exec deny-network on macOS, unshare --net on Linux",
+    "sandbox_filesystem": "writes restricted to temp directory only — HOME overridden, sensitive env vars stripped",
+    "no_bypass_flags": "true — there is no --skip-sandbox, --no-sandbox, or any flag to disable isolation"
   }
 }

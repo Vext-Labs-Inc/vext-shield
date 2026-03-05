@@ -14,7 +14,6 @@ Produces pentest-style reports with PoC evidence and remediation guidance.
 Usage:
     python3 redteam.py --skill-dir /path/to/skill
     python3 redteam.py --skill-dir /path/to/skill --json
-    python3 redteam.py --skill-dir /path/to/skill --skip-sandbox
     python3 redteam.py --skill-dir /path/to/skill --output /tmp/report.md
 
 Built by Vext Labs.
@@ -398,9 +397,8 @@ WORM_PATTERNS: list[dict[str, str]] = [
 class RedTeamRunner:
     """Runs adversarial test batteries against an OpenClaw skill."""
 
-    def __init__(self, skill_dir: Path, skip_sandbox: bool = False) -> None:
+    def __init__(self, skill_dir: Path) -> None:
         self.skill_dir = skill_dir.resolve()
-        self.skip_sandbox = skip_sandbox
         self.scanner = ScannerCore()
         self.sandbox = SandboxRunner(timeout_seconds=30)
 
@@ -777,13 +775,12 @@ class RedTeamRunner:
                     remediation="Restrict file access to the skill's own directory.",
                 ))
 
-        # Sandbox behavioral test
-        if not self.skip_sandbox:
-            sandbox_findings = self._sandbox_data_boundary_test()
-            tests_run += 1
-            if sandbox_findings:
-                tests_failed += 1
-                findings.extend(sandbox_findings)
+        # Sandbox behavioral test (always runs — sandbox enforces OS-level isolation)
+        sandbox_findings = self._sandbox_data_boundary_test()
+        tests_run += 1
+        if sandbox_findings:
+            tests_failed += 1
+            findings.extend(sandbox_findings)
 
         elapsed = int((time.monotonic() - start) * 1000)
         return BatteryResult(
@@ -884,13 +881,12 @@ class RedTeamRunner:
                     ),
                 ))
 
-        # Sandbox persistence test
-        if not self.skip_sandbox:
-            sandbox_findings = self._sandbox_persistence_test()
-            tests_run += 1
-            if sandbox_findings:
-                tests_failed += 1
-                findings.extend(sandbox_findings)
+        # Sandbox persistence test (always runs — sandbox enforces OS-level isolation)
+        sandbox_findings = self._sandbox_persistence_test()
+        tests_run += 1
+        if sandbox_findings:
+            tests_failed += 1
+            findings.extend(sandbox_findings)
 
         elapsed = int((time.monotonic() - start) * 1000)
         return BatteryResult(
@@ -1003,13 +999,12 @@ class RedTeamRunner:
                 ),
             ))
 
-        # Sandbox exfiltration test
-        if not self.skip_sandbox:
-            sandbox_findings = self._sandbox_exfil_test()
-            tests_run += 1
-            if sandbox_findings:
-                tests_failed += 1
-                findings.extend(sandbox_findings)
+        # Sandbox exfiltration test (always runs — sandbox enforces OS-level isolation)
+        sandbox_findings = self._sandbox_exfil_test()
+        tests_run += 1
+        if sandbox_findings:
+            tests_failed += 1
+            findings.extend(sandbox_findings)
 
         elapsed = int((time.monotonic() - start) * 1000)
         return BatteryResult(
@@ -1291,10 +1286,6 @@ def main() -> None:
     parser.add_argument("--output", type=Path, help="Custom output path")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     parser.add_argument(
-        "--skip-sandbox", action="store_true",
-        help="Skip sandbox behavioral tests (static analysis only)",
-    )
-    parser.add_argument(
         "--quiet", action="store_true",
         help="Minimal output — just the verdict",
     )
@@ -1309,7 +1300,7 @@ def main() -> None:
     if not args.quiet:
         print(f"VEXT Red Team — Testing: {skill_dir.name}\n")
 
-    runner = RedTeamRunner(skill_dir, skip_sandbox=args.skip_sandbox)
+    runner = RedTeamRunner(skill_dir)
     report = runner.run_all_batteries()
 
     # Generate output

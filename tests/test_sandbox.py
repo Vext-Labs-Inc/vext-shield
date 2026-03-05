@@ -16,8 +16,49 @@ from shared.sandbox_runner import SandboxRunner, BehavioralReport
 
 @pytest.fixture
 def sandbox() -> SandboxRunner:
-    """Create a sandbox runner with short timeout."""
-    return SandboxRunner(timeout_seconds=10)
+    """Create a sandbox runner with short timeout.
+
+    Uses require_full_isolation=False so tests pass on systems without
+    sandbox-exec or unshare. Production code uses the default (True).
+    """
+    return SandboxRunner(timeout_seconds=10, require_full_isolation=False)
+
+
+class TestSandboxIsolationPolicy:
+    def test_default_requires_full_isolation(self):
+        """Default SandboxRunner requires FULL OS-level isolation."""
+        runner = SandboxRunner()
+        assert runner.require_full_isolation is True
+
+    def test_refuses_execution_without_full_isolation(self, tmp_path: Path):
+        """When require_full_isolation=True and no OS sandbox, refuse to run."""
+        runner = SandboxRunner(timeout_seconds=5, require_full_isolation=True)
+
+        # If this system has full isolation, skip this test
+        if runner.has_full_isolation:
+            pytest.skip("System has full isolation — cannot test refusal")
+
+        script = tmp_path / "test.py"
+        script.write_text('print("should not run")\n')
+
+        report = runner.run_skill_script(script, tmp_path)
+        assert report.error is not None
+        assert "FULL OS-level sandbox isolation is required" in report.error
+        assert report.exit_code == -1
+
+    def test_has_full_isolation_property(self):
+        """has_full_isolation property should return a boolean."""
+        runner = SandboxRunner()
+        assert isinstance(runner.has_full_isolation, bool)
+
+    def test_no_monitor_isolation_level(self, sandbox: SandboxRunner, tmp_path: Path):
+        """MONITOR isolation level should never appear."""
+        script = tmp_path / "test.py"
+        script.write_text('print("hello")\n')
+
+        report = sandbox.run_skill_script(script, tmp_path)
+        assert report.isolation_level in ("FULL", "COPY")
+        assert report.isolation_level != "MONITOR"
 
 
 class TestSandboxEnvironment:
@@ -67,7 +108,7 @@ class TestSandboxExecution:
 
     def test_enforces_timeout(self, tmp_path: Path):
         """Scripts exceeding timeout should be killed."""
-        runner = SandboxRunner(timeout_seconds=2)
+        runner = SandboxRunner(timeout_seconds=2, require_full_isolation=False)
         script = tmp_path / "slow.py"
         script.write_text(
             'import time\n'

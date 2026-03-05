@@ -49,7 +49,6 @@ Detects self-replication patterns: skills that modify other skills, inject thems
 python3 redteam.py --skill-dir /path/to/skill         # Test a specific skill
 python3 redteam.py --skill-dir /path/to/skill --json   # JSON output
 python3 redteam.py --skill-dir /path/to/skill --output /tmp/report.md
-python3 redteam.py --skill-dir /path/to/skill --skip-sandbox  # Static only
 ```
 
 ## Report Output
@@ -76,12 +75,13 @@ Reports are saved to `~/.openclaw/vext-shield/reports/redteam-{timestamp}.md`.
 
 ## Safety
 
+- **OS-level sandbox required**: macOS `sandbox-exec` (kernel network deny + filesystem restriction) or Linux `unshare --net` (network namespace). If neither is available, **execution is refused** — there is no unsafe fallback
 - **Target scripts execute against a temporary copy** — the original skill directory is never modified
-- **OS-level sandbox when available**: macOS `sandbox-exec` (kernel network deny + filesystem restriction) or Linux `unshare --net` (network namespace). Falls back to temp-copy isolation on other systems
 - **HOME overridden** to temp directory — prevents writes to ~/.openclaw, ~/.ssh, ~/.aws, etc.
 - Sensitive environment variables stripped (API keys, tokens, AWS/SSH/GitHub credentials)
 - Sandbox processes killed after a 30-second timeout
 - Post-execution file snapshot diffing detects any changes made during execution
+- **No bypass flags exist** — there is no `--skip-sandbox` or `--no-sandbox` option
 - No network requests are made by the red team tool itself
 - Reports are saved locally to `~/.openclaw/vext-shield/reports/`
 - Static analysis uses read-only file access and AST parsing
